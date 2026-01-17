@@ -9,16 +9,14 @@ from telegram.ext import (
     Filters, CallbackQueryHandler, CallbackContext
 )
 
-# ================= إعدادات =================
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 ACCESS_CODE = "20002000"
 
-# ================= تخزين =================
 sessions = {}
 authorized_users = set()
 running_processes = {}
 
-# ================= أزرار =================
+# ---------- أزرار ----------
 def choice_keyboard():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("1    2011", callback_data="1")],
@@ -29,9 +27,9 @@ def choice_keyboard():
 
 def delay_keyboard():
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("⏱️ 1.2s (أفضل)", callback_data="1.2")],
-        [InlineKeyboardButton("🐢 2.0s", callback_data="2.0")],
-        [InlineKeyboardButton("🛡️ 3.0s", callback_data="3.0")]
+        [InlineKeyboardButton("⏱️ 1.5s (أفضل)", callback_data="1.5")],
+        [InlineKeyboardButton("🐢 2.5s", callback_data="2.5")],
+        [InlineKeyboardButton("🛡️ 4.0s", callback_data="4.0")]
     ])
 
 def stop_keyboard():
@@ -39,18 +37,14 @@ def stop_keyboard():
         [InlineKeyboardButton("⛔ إيقاف", callback_data="stop")]
     ])
 
-# ================= تشغيل السكربت =================
+# ---------- تشغيل السكربت ----------
 def run_script_async(context, chat_id, data):
     uid = data["uid"]
 
     def worker():
         delay = float(data["delay"])
         try:
-            context.bot.send_message(
-                chat_id=chat_id,
-                text="🟢 البوت شغّال ⏳",
-                reply_markup=stop_keyboard()
-            )
+            context.bot.send_message(chat_id=chat_id, text="🟢 البوت شغّال ⏳", reply_markup=stop_keyboard())
 
             pid, fd = pty.fork()
             if pid == 0:
@@ -58,36 +52,21 @@ def run_script_async(context, chat_id, data):
 
             running_processes[uid] = pid
 
-            def wait_prompt():
-                try:
-                    os.read(fd, 1024)
-                except Exception:
-                    pass
-
-            def write_line(text):
+            def send(text):
                 os.write(fd, (text + "\r\n").encode())
                 time.sleep(delay)
 
-            # ===== التسلسل الصحيح (مثل المحلي) =====
+            # ⏳ تأخير أولي مثل الإنسان
+            time.sleep(delay)
 
-            wait_prompt()                 # ⏳ السكربت يطلب TOKEN
-            write_line(data["token"])     # TOKEN + Enter
+            # ===== نفس التشغيل المحلي =====
+            send(data["token"])
+            send(data["id"])
+            send(data["choice"])
 
-            wait_prompt()                 # ⏳ يطلب ID
-            write_line(data["id"])        # ID + Enter
-
-            wait_prompt()                 # ⏳ يطلب اختيار
-            write_line(data["choice"])    # 1 / 2 / 3 / 4 + Enter
-
-            # ننتظر انتهاء السكربت
-            try:
-                while True:
-                    os.read(fd, 1024)
-            except OSError:
-                pass
-
-            running_processes.pop(uid, None)
-            context.bot.send_message(chat_id=chat_id, text="🔴 البوت توقف")
+            # نترك السكربت يشتغل
+            while True:
+                time.sleep(1)
 
         except Exception:
             running_processes.pop(uid, None)
@@ -95,11 +74,10 @@ def run_script_async(context, chat_id, data):
 
     threading.Thread(target=worker, daemon=True).start()
 
-# ================= أوامر =================
+# ---------- أوامر ----------
 def start(update: Update, context: CallbackContext):
     uid = update.effective_user.id
     sessions[uid] = {}
-
     if uid not in authorized_users:
         update.message.reply_text("🔐 اكتب رمز الدخول:")
     else:
@@ -133,7 +111,7 @@ def handle(update: Update, context: CallbackContext):
         update.message.reply_text("🔢 اختر:", reply_markup=choice_keyboard())
         return
 
-# ================= أزرار =================
+# ---------- أزرار ----------
 def buttons(update: Update, context: CallbackContext):
     query = update.callback_query
     uid = query.from_user.id
@@ -148,7 +126,7 @@ def buttons(update: Update, context: CallbackContext):
         context.bot.send_message(chat_id=chat_id, text="⏱️ اختر التأخير:", reply_markup=delay_keyboard())
         return
 
-    if query.data in ("1.2", "2.0", "3.0"):
+    if query.data in ("1.5", "2.5", "4.0"):
         sessions[uid]["delay"] = query.data
         data = sessions.pop(uid)
         data["uid"] = uid
@@ -165,15 +143,13 @@ def buttons(update: Update, context: CallbackContext):
             running_processes.pop(uid, None)
         context.bot.send_message(chat_id=chat_id, text="⛔ تم إيقاف العملية")
 
-# ================= main =================
+# ---------- main ----------
 def main():
     updater = Updater(BOT_TOKEN, use_context=True)
     dp = updater.dispatcher
-
     dp.add_handler(CommandHandler("start", start))
     dp.add_handler(MessageHandler(Filters.text & ~Filters.command, handle))
     dp.add_handler(CallbackQueryHandler(buttons))
-
     updater.start_polling()
     updater.idle()
 
