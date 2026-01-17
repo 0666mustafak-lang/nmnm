@@ -3,33 +3,39 @@ import pty
 import sys
 import time
 import threading
-from telegram import (
-    Update, InlineKeyboardButton, InlineKeyboardMarkup
-)
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Updater, CommandHandler, MessageHandler,
     Filters, CallbackQueryHandler, CallbackContext
 )
 
+# ========= إعدادات =========
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
+ACCESS_CODE = "20002000"  # رمز الدخول ثابت داخل الكود
 
+# ========= تخزين =========
 sessions = {}
+authorized_users = set()
 running_processes = {}
 
-# ---------- أزرار اختيار الرقم ----------
+# ========= أزرار =========
 def choice_keyboard():
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("1️⃣ (2011)", callback_data="choice_1")],
-        [InlineKeyboardButton("2️⃣ (2012)", callback_data="choice_2")],
-        [InlineKeyboardButton("3️⃣ (2013)", callback_data="choice_3")],
-        [InlineKeyboardButton("4️⃣ (2012 / 2023)", callback_data="choice_4")]
+        [
+            InlineKeyboardButton("1️⃣", callback_data="choice_1"),
+            InlineKeyboardButton("2️⃣", callback_data="choice_2")
+        ],
+        [
+            InlineKeyboardButton("3️⃣", callback_data="choice_3"),
+            InlineKeyboardButton("4️⃣", callback_data="choice_4")
+        ]
     ])
 
 def delay_keyboard():
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("⏱️ طبيعي 1.2s", callback_data="delay_1")],
-        [InlineKeyboardButton("🐢 بطيء 2.0s", callback_data="delay_2")],
-        [InlineKeyboardButton("🛡️ آمن جداً 3.0s", callback_data="delay_3")]
+        [InlineKeyboardButton("⏱️ 1.2s", callback_data="delay_1")],
+        [InlineKeyboardButton("🐢 2.0s", callback_data="delay_2")],
+        [InlineKeyboardButton("🛡️ 3.0s", callback_data="delay_3")]
     ])
 
 def stop_keyboard():
@@ -43,16 +49,16 @@ DELAY_MAP = {
     "delay_3": 3.0
 }
 
-# ---------- تشغيل السكربت ----------
-def run_script_async(update, data):
-    uid = update.effective_user.id
+# ========= تشغيل السكربت (Thread + PTY) =========
+def run_script_async(context, chat_id, data):
+    uid = data["uid"]
 
     def worker():
         delay = data["delay"]
-
         try:
-            update.message.reply_text(
-                f"🟢 البوت شغّال ⏳\n⏱️ التأخير: {delay}s",
+            context.bot.send_message(
+                chat_id=chat_id,
+                text="🟢 البوت شغّال ⏳",
                 reply_markup=stop_keyboard()
             )
 
@@ -69,10 +75,10 @@ def run_script_async(update, data):
                 os.write(fd, b"\n")
                 time.sleep(delay)
 
-            # إدخال البيانات
+            # ترتيب الإدخال
             type_text(data["token"])
             type_text(data["id"])
-            type_text(data["choice"])  # رقم فقط 1 / 2 / 3 / 4
+            type_text(data["choice"])  # رقم فقط
 
             try:
                 while True:
@@ -81,25 +87,44 @@ def run_script_async(update, data):
                 pass
 
             running_processes.pop(uid, None)
-            update.message.reply_text("🔴 البوت توقف (العملية انتهت)")
+            context.bot.send_message(
+                chat_id=chat_id,
+                text="🔴 البوت توقف (انتهت العملية)"
+            )
 
         except Exception:
             running_processes.pop(uid, None)
-            update.message.reply_text("❌ صار كراش وتوقفت العملية")
+            context.bot.send_message(
+                chat_id=chat_id,
+                text="❌ صار كراش وتوقفت العملية"
+            )
 
     threading.Thread(target=worker, daemon=True).start()
 
-# ---------- أوامر ----------
+# ========= أوامر =========
 def start(update: Update, context: CallbackContext):
-    sessions[update.effective_user.id] = {}
-    update.message.reply_text("✏️ اكتب التوكن:")
+    uid = update.effective_user.id
+    sessions[uid] = {}
+    if uid not in authorized_users:
+        update.message.reply_text("🔐 اكتب رمز الدخول:")
+    else:
+        update.message.reply_text("✏️ اكتب التوكن:")
 
 def handle(update: Update, context: CallbackContext):
     uid = update.effective_user.id
     text = update.message.text.strip()
 
     if uid not in sessions:
-        update.message.reply_text("❗ لازم تكتب /start بالبداية")
+        update.message.reply_text("❗ لازم تكتب /start")
+        return
+
+    # تحقق الرمز
+    if uid not in authorized_users:
+        if text != ACCESS_CODE:
+            update.message.reply_text("كسمك")
+            return
+        authorized_users.add(uid)
+        update.message.reply_text("✏️ اكتب التوكن:")
         return
 
     s = sessions[uid]
@@ -111,59 +136,53 @@ def handle(update: Update, context: CallbackContext):
 
     if "id" not in s:
         s["id"] = text
-        update.message.reply_text(
-            "🔢 اختر الفترة:",
-            reply_markup=choice_keyboard()
-        )
+        update.message.reply_text("🔢 اختر رقم:", reply_markup=choice_keyboard())
         return
 
-# ---------- أزرار ----------
+# ========= أزرار =========
 def buttons(update: Update, context: CallbackContext):
     query = update.callback_query
     uid = query.from_user.id
+    chat_id = query.message.chat_id
     query.answer()
 
-    # اختيار الرقم (يرسل رقم فقط)
+    if uid not in authorized_users:
+        context.bot.send_message(chat_id=chat_id, text="❌ غير مصرح")
+        return
+
     if query.data.startswith("choice_"):
         if uid not in sessions:
-            query.message.reply_text("❌ انتهت الجلسة، اكتب /start")
             return
-
         sessions[uid]["choice"] = query.data.split("_")[1]
-        query.message.reply_text(
-            "⏱️ اختر التأخير:",
+        context.bot.send_message(
+            chat_id=chat_id,
+            text="⏱️ اختر التأخير:",
             reply_markup=delay_keyboard()
         )
         return
 
-    # اختيار التأخير
     if query.data.startswith("delay_"):
         if uid not in sessions:
-            query.message.reply_text("❌ انتهت الجلسة، اكتب /start")
             return
-
         sessions[uid]["delay"] = DELAY_MAP[query.data]
         data = sessions.pop(uid)
-
-        run_script_async(update, data)
+        data["uid"] = uid
+        run_script_async(context, chat_id, data)
         return
 
-    # زر إيقاف
     if query.data == "stop":
         pid = running_processes.get(uid)
         if not pid:
-            query.message.reply_text("ℹ️ ماكو عملية شغّالة")
+            context.bot.send_message(chat_id=chat_id, text="ℹ️ ماكو عملية شغّالة")
             return
-
         try:
             os.kill(pid, 9)
         except Exception:
             pass
-
         running_processes.pop(uid, None)
-        query.message.reply_text("⛔ تم إيقاف العملية")
+        context.bot.send_message(chat_id=chat_id, text="⛔ تم إيقاف العملية")
 
-# ---------- main ----------
+# ========= main =========
 def main():
     updater = Updater(BOT_TOKEN, use_context=True)
     dp = updater.dispatcher
