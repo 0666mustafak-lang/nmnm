@@ -2,6 +2,7 @@ import os
 import pty
 import sys
 import time
+import threading
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Updater, CommandHandler, MessageHandler,
@@ -20,43 +21,42 @@ DELAYS = {
 sessions = {}
 last_data = {}
 
-def run_script(update, context, data):
-    choice = data["choice"]
-    delay = DELAYS[choice]
+# ---------- تشغيل السكربت (Thread + PTY) ----------
+def run_script_async(update, context, data):
+    def worker():
+        choice = data["choice"]
+        delay = DELAYS[choice]
 
-    update.message.reply_text(f"⏳ جاري التشغيل (delay = {delay}s) ...")
+        try:
+            update.message.reply_text("🟢 البوت شغّال ⏳")
 
-    pid, fd = pty.fork()
-    if pid == 0:
-        os.execv(sys.executable, [sys.executable, "Instagram o (1).py"])
+            pid, fd = pty.fork()
+            if pid == 0:
+                os.execv(sys.executable, [sys.executable, "Instagram o (1).py"])
 
-    def write_line(text):
-        os.write(fd, (text + "\n").encode())
-        time.sleep(delay)
+            def write_line(text):
+                os.write(fd, (text + "\n").encode())
+                time.sleep(delay)
 
-    write_line(data["token"])
-    write_line(data["id"])
-    write_line(choice)
+            write_line(data["token"])
+            write_line(data["id"])
+            write_line(choice)
 
-    output = b""
-    try:
-        while True:
-            chunk = os.read(fd, 1024)
-            if not chunk:
-                break
-            output += chunk
-    except OSError:
-        pass
+            # ننتظر السكربت يخلص بدون إرسال output
+            try:
+                while True:
+                    os.read(fd, 1024)
+            except OSError:
+                pass
 
-    if output.strip():
-        update.message.reply_text(output.decode(errors="ignore"))
+            update.message.reply_text("🔴 البوت توقف (العملية انتهت)")
 
-    keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("🔁 إعادة", callback_data="restart")],
-        [InlineKeyboardButton("▶️ نفس المعطيات", callback_data="repeat")]
-    ])
-    update.message.reply_text("اختر:", reply_markup=keyboard)
+        except Exception:
+            update.message.reply_text("❌ صار كراش وتوقف البوت")
 
+    threading.Thread(target=worker, daemon=True).start()
+
+# ---------- أوامر ----------
 def start(update: Update, context: CallbackContext):
     uid = update.effective_user.id
     sessions[uid] = {}
@@ -67,7 +67,7 @@ def handle(update: Update, context: CallbackContext):
     text = update.message.text.strip()
 
     if uid not in sessions:
-        update.message.reply_text("اكتب /start للبداية")
+        update.message.reply_text("❗ لازم تكتب /start بالبداية")
         return
 
     s = sessions[uid]
@@ -89,9 +89,11 @@ def handle(update: Update, context: CallbackContext):
 
         s["choice"] = text
         last_data[uid] = s.copy()
-        run_script(update, context, s)
+
+        run_script_async(update, context, s)
         del sessions[uid]
 
+# ---------- أزرار ----------
 def buttons(update: Update, context: CallbackContext):
     query = update.callback_query
     uid = query.from_user.id
@@ -107,9 +109,9 @@ def buttons(update: Update, context: CallbackContext):
             query.message.reply_text("❌ ماكو بيانات سابقة")
             return
 
-        fake_update = Update(update.update_id, message=query.message)
-        run_script(fake_update, context, last_data[uid])
+        run_script_async(update, context, last_data[uid])
 
+# ---------- main ----------
 def main():
     updater = Updater(BOT_TOKEN, use_context=True)
     dp = updater.dispatcher
