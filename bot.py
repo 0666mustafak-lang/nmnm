@@ -9,16 +9,16 @@ from telegram.ext import (
     Filters, CallbackQueryHandler, CallbackContext
 )
 
-# ===== الإعدادات =====
+# ================= إعدادات =================
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 ACCESS_CODE = "20002000"
 
-# ===== التخزين =====
+# ================= تخزين =================
 sessions = {}
 authorized_users = set()
 running_processes = {}
 
-# ===== الأزرار =====
+# ================= أزرار =================
 def choice_keyboard():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("1    2011", callback_data="1")],
@@ -39,7 +39,7 @@ def stop_keyboard():
         [InlineKeyboardButton("⛔ إيقاف", callback_data="stop")]
     ])
 
-# ===== تشغيل السكربت =====
+# ================= تشغيل السكربت =================
 def run_script_async(context, chat_id, data):
     uid = data["uid"]
 
@@ -58,18 +58,28 @@ def run_script_async(context, chat_id, data):
 
             running_processes[uid] = pid
 
+            def wait_prompt():
+                try:
+                    os.read(fd, 1024)
+                except Exception:
+                    pass
+
             def write_line(text):
-                os.write(fd, (text + "\n").encode())
+                os.write(fd, (text + "\r\n").encode())
                 time.sleep(delay)
 
-            # ⏳ انتظار بسيط حتى السكربت يجهّز input()
-            time.sleep(delay)
+            # ===== التسلسل الصحيح (مثل المحلي) =====
 
-            # ===== محاكاة الترمنل حرفياً =====
-            write_line(data["token"])   # TOKEN + Enter
-            write_line(data["id"])      # ID + Enter
-            write_line(data["choice"]) # 1/2/3/4 + Enter
+            wait_prompt()                 # ⏳ السكربت يطلب TOKEN
+            write_line(data["token"])     # TOKEN + Enter
 
+            wait_prompt()                 # ⏳ يطلب ID
+            write_line(data["id"])        # ID + Enter
+
+            wait_prompt()                 # ⏳ يطلب اختيار
+            write_line(data["choice"])    # 1 / 2 / 3 / 4 + Enter
+
+            # ننتظر انتهاء السكربت
             try:
                 while True:
                     os.read(fd, 1024)
@@ -85,7 +95,7 @@ def run_script_async(context, chat_id, data):
 
     threading.Thread(target=worker, daemon=True).start()
 
-# ===== أوامر =====
+# ================= أوامر =================
 def start(update: Update, context: CallbackContext):
     uid = update.effective_user.id
     sessions[uid] = {}
@@ -123,7 +133,7 @@ def handle(update: Update, context: CallbackContext):
         update.message.reply_text("🔢 اختر:", reply_markup=choice_keyboard())
         return
 
-# ===== أزرار =====
+# ================= أزرار =================
 def buttons(update: Update, context: CallbackContext):
     query = update.callback_query
     uid = query.from_user.id
@@ -155,7 +165,7 @@ def buttons(update: Update, context: CallbackContext):
             running_processes.pop(uid, None)
         context.bot.send_message(chat_id=chat_id, text="⛔ تم إيقاف العملية")
 
-# ===== main =====
+# ================= main =================
 def main():
     updater = Updater(BOT_TOKEN, use_context=True)
     dp = updater.dispatcher
